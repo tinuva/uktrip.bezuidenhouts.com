@@ -1,0 +1,26 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo Build enviromment `uname -a` `aws --version 2>&1` node/`node --version` npm/`npm --version`
+      - echo "Installing dependencies - `pwd`"
+      - npm install --global gatsby-cli
+      - npm install || (cat /root/.npm/_logs/*-debug.log && false)
+      - echo "dependencies install completed `date`"
+  build:
+    commands:
+      - echo "Starting build `date` in `pwd`"
+      - gatsby build
+  post_build:
+    commands:
+      - echo "Sync S3 Articles Bucket ${ARTICLES_BUCKET}"
+      - aws s3 sync public/ "s3://${ARTICLES_BUCKET}/" --cache-control max-age=86400 --exclude index.html --exclude sitemap.xml --acl public-read
+      - aws s3 cp public/index.html "s3://${ARTICLES_BUCKET}/" --metadata-directive REPLACE --cache-control max-age=30 --content-type text/html --acl public-read
+      - aws s3 cp public/sitemap.xml "s3://${ARTICLES_BUCKET}/" --metadata-directive REPLACE --cache-control max-age=30 --content-type text/html --acl public-read
+      - echo "build completed on `date`"
+
+artifacts:
+  type: zip
+  files:
+    - buildspec.yml

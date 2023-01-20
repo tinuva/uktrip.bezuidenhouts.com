@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This stack creates a CI/CD pipeline to launch a static blog
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Domain options"
+        Parameters:
+          - SiteUrl
+          - ValidationDomain
+      -
+        Label:
+          default: "Amazon Resource Configuration"
+        Parameters:
+          - CloudFrontPriceClass
+
+
+Parameters:
+  SiteUrl:
+     Description: A fully-qualified domain name. eg. blog.domain.com (exclude https://)
+     Type: String
+     MinLength: 1
+     MaxLength: 64
+     AllowedPattern: (?!-)[a-zA-Z0-9-.]*(?<!-)
+     ConstraintDescription: Must be a valid fully-qualified domain name.
+  ValidationDomain:
+     Description: A fully-qualified domain name. eg. domain.com (exclude https://)
+     Type: String
+     MinLength: 1
+     MaxLength: 64
+     AllowedPattern: (?!-)[a-zA-Z0-9-.]*(?<!-)
+     ConstraintDescription: Must be a valid fully-qualified domain name to validate ACM certificate.
+  CloudFrontPriceClass:
+    Type: String
+    Description: CloudFront Price Class - https://aws.amazon.com/cloudfront/pricing/#element-45a38ab9-76b6-4294-9151-344c4ef2990e
+    AllowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+    Default: PriceClass_200
+
+
+Outputs:
+  CodeCommitGitRepo:
+    Description: URL for Git Repo
+    Value: !GetAtt CodeRepository.CloneUrlHttp
+  CodeCommitConsole:
+    Description: Link to CodeCommit console for repo
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/codecommit/home?region=${AWS::Region}#/repository/${AWS::StackName}_repo'
+  CodeBuildCloneRepoConsole:
+    Description: Link to CodeBuild clone github repo console
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/codebuild/home?region=${AWS::Region}#/projects/${AWS::StackName}_clone_build/view'
+  PipelineConsole:
+    Description: Link to Pipeline console
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${AWS::StackName}_pipeline'
+
+Resources:
+  # S3 Blog Bucket
+  ArticlesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: 404.html
+
+  # Code repository for the service
+  CodeRepository:
+    Type: AWS::CodeCommit::Repository
+    DeletionPolicy: Retain
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}_repo'
+      RepositoryDescription: !Sub 'Repository for the ${AWS::StackName} service'
+
+  # CodeBuild project and resources (S3 Bucket for build artifacts, Role, Project)
+  BuildArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}_build'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}_build:*'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+              - Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArticlesBucket}/*'
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+              - Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}'
+                  - !Sub 'arn:aws:s3:::${ArticlesBucket}'
+                Action:
+                  - 's3:ListBucket'
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}_build'
+      Description: Build project for the static website
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/nodejs:8.11.0
+        EnvironmentVariables:
+          - Name: BUILD_OUTPUT_BUCKET
+            Value: !Ref BuildArtifactsBucket
+          - Name: ARTICLES_BUCKET
+            Value: !Ref ArticlesBucket
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+
+  # CodePipeline definition and required roles
+  CFNPipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: CloudFormation Pipeline Execution Policy
+      Path: "/"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'cloudformation:CreateStack'
+              - 'cloudformation:DescribeStacks'
+              - 'cloudformation:DeleteStack'
+              - 'cloudformation:UpdateStack'
+              - 'cloudformation:CreateChangeSet'
+              - 'cloudformation:ExecuteChangeSet'
+              - 'cloudformation:DeleteChangeSet'
+              - 'cloudformation:DescribeChangeSet'
+              - 'cloudformation:SetStackPolicy'
+              - 'cloudformation:SetStackPolicy'
+              - 'cloudformation:ValidateTemplate'
+              - 'codebuild:StartBuild'
+              - 'codebuild:BatchGetBuilds'
+            Resource: "*"
+
+  PipelineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+            - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSCodeCommitFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - !Ref CFNPipelinePolicy
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+                - Action:
+                    - 'iam:PassRole'
+                    - 'lambda:InvokeFunction'
+                    - 'lambda:ListFunctions'
+                    - 'lambda:InvokeAsyc'
+                  Effect: Allow
+                  Resource: '*'
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref BuildArtifactsBucket
+        Type: S3
+      Name: !Sub ${AWS::StackName}_pipeline
+      RoleArn: !GetAtt PipelineExecutionRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: CodeCommitRepo
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: 1
+              Configuration:
+                RepositoryName: !Sub '${AWS::StackName}_repo'
+                BranchName: master
+              OutputArtifacts:
+                - Name: SourceZip
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceZip
+              OutputArtifacts:
+                - Name: BuiltZip
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: ApiLambdaPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Action:
+                  - acm:Request*
+                  - acm:Describe*
+                  - acm:DeleteCertificate
+                  - acm:ListCertificates
+                  - logs:Describe*
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+                Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Effect: Allow
+
+  CertificateLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python2.7
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 50
+      Code:
+        ZipFile: |
+          import boto3, json, traceback, time
+          import cfnresponse
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              response_data = {}
+              try:
+                  client = boto3.client('acm',region_name=event['ResourceProperties']["CertRegion"])
+                  if event["RequestType"] == "Create" or event["RequestType"] == "Update":
+                      logger.info("Event Body - " + json.dumps(event))
+
+                      domain_name_parameter = event['ResourceProperties']['DomainName']
+
+                      cert_arn = client.request_certificate(DomainName=domain_name_parameter,ValidationMethod='DNS')['CertificateArn']
+                      time.sleep(5)
+                      validation_resource_record = client.describe_certificate(CertificateArn=cert_arn)
+
+                      logger.info("Name - " + validation_resource_record['Certificate']['DomainValidationOptions'][0]['ResourceRecord']['Name'])
+                      response_data['ResourceRecordName'] = validation_resource_record['Certificate']['DomainValidationOptions'][0]['ResourceRecord']['Name']
+                      response_data['ResourceRecordValue'] = validation_resource_record['Certificate']['DomainValidationOptions'][0]['ResourceRecord']['Value']
+                      response_data['Arn'] = validation_resource_record['Certificate']['CertificateArn']
+
+                      logger.info("Resposne - " + json.dumps(response_data))
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, cert_arn)
+
+                  elif event["RequestType"] == "Delete":
+                      logger.info("Event Body - " + json.dumps(event))
+                      cert_arn = event['PhysicalResourceId']
+                      client.delete_certificate(CertificateArn=cert_arn)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS,{})
+                  else:
+                      logger.info("Event Body - " + json.dumps(event))
+                      cfnresponse.send(event, context, cfnresponse.FAILED,{})
+              except Exception as e:
+                  msg = 'See details in CloudWatch Log Stream: ' + context.log_stream_name
+                  response_data['exception'] = str(e)[0:255] + '... ' + msg
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+
+  CertificateAwaitValidationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python2.7
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3, json, traceback, time
+          import cfnresponse
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              response_data = {}
+              try:
+                  client = boto3.client('acm',region_name=event['ResourceProperties']["CertRegion"])
+                  if event["RequestType"] == "Create" or event["RequestType"] == "Update":
+                      logger.info("Event Body - " + json.dumps(event))
+
+                      domain = event['ResourceProperties']['DomainName']
+                      fail_on_timeout = event['ResourceProperties']['FailOnTimeout']
+
+                      # as long as we have at least 10 seconds left
+                      while context.get_remaining_time_in_millis() > 10000:
+                          time.sleep(5)
+                          resp = client.list_certificates(CertificateStatuses=['ISSUED'])
+                          if any(cert['DomainName'] == domain for cert in resp['CertificateSummaryList']):
+                              cert_info = [cert for cert in resp['CertificateSummaryList']
+                                           if cert['DomainName'] == domain][0]
+                              logger.info("Certificate has been issued for domain %s, ARN: %s" %
+                                       (domain, cert_info['CertificateArn']))
+                              cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                              return True
+                          logger.info("Awaiting cert for domain %s" % domain)
+
+                      logger.warning("Timed out waiting for cert for domain %s" % domain)
+                      if fail_on_timeout == 'true':
+                          cfnresponse.send(event, context, cfnresponse.FAILED,{})
+                          return False
+
+                      logger.info("Resposne - " + json.dumps(response_data))
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+
+                  elif event["RequestType"] == "Delete":
+                      logger.info("Event Body - " + json.dumps(event))
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS,{})
+                  else:
+                      logger.info("Event Body - " + json.dumps(event))
+                      cfnresponse.send(event, context, cfnresponse.FAILED,{})
+              except Exception as e:
+                  msg = 'See details in CloudWatch Log Stream: ' + context.log_stream_name
+                  response_data['exception'] = str(e)[0:255] + '... ' + msg
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+
+  Certificate:
+    Type: Custom::ACM
+    DependsOn:
+      - CertificateLambdaFunction
+    Properties:
+      ServiceToken: !GetAtt CertificateLambdaFunction.Arn
+      DomainName: !Sub '${SiteUrl}'
+      CertRegion: us-east-1
+
+  ValidateCertificate:
+    Type: AWS::Route53::RecordSet
+    DependsOn: Certificate
+    Properties:
+      HostedZoneName: !Sub '${ValidationDomain}.'
+      Comment: !Sub ${AWS::StackName}
+      Name: !GetAtt Certificate.ResourceRecordName
+      Type: CNAME
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt Certificate.ResourceRecordValue
+
+  AwaitValidateCertificate:
+    Type: Custom::ValidateACM
+    DependsOn: ValidateCertificate
+    Properties:
+      ServiceToken: !GetAtt CertificateAwaitValidationLambdaFunction.Arn
+      DomainName: !Sub '${SiteUrl}'
+      FailOnTimeout: False
+      CertRegion: us-east-1
+
+# CDN --- START ---
+  BlogCDN:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: #without those explicit depends, the creation just fails
+      - AwaitValidateCertificate
+      - ArticlesBucket
+    Properties:
+      DistributionConfig:
+        # --- CDN: Settings ---
+        Enabled: true
+        Comment: !Ref SiteUrl
+        DefaultRootObject: ''
+        PriceClass: !Ref CloudFrontPriceClass #PriceClass_100 # PriceClass_All / PriceClass_100
+        WebACLId: ''
+        HttpVersion: 'http1.1'
+
+        ViewerCertificate:
+          AcmCertificateArn: !GetAtt Certificate.Arn
+          MinimumProtocolVersion: 'TLSv1'
+          SslSupportMethod: 'sni-only'
+
+        Aliases:
+          - !Ref SiteUrl
+
+        # --- CDN: Origins ---
+        Origins:
+          - DomainName: !Sub "${ArticlesBucket}.s3-website.${AWS::Region}.amazonaws.com" #define the s3 origin
+            Id: static
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only #again API-Gateway only supports https
+            OriginPath: ''
+
+        # --- CDN: CacheBehaviors ---
+        DefaultCacheBehavior: #this section defines attached behaviors, first the API Gateway
+          ForwardedValues:
+            Cookies:
+              Forward: 'all'
+            QueryString: true
+            Headers: #define explicit headers, since API Gateway doesn't work otherwise
+              - Accept
+              - Referer
+              - Athorization
+              - Content-Type
+          MinTTL: 0
+          TargetOriginId: static #name of the origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - POST
+            - PUT
+            - PATCH
+            - OPTIONS
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+          SmoothStreaming: false
+
+# CDN --- END ---
+
+# DNS --- START ---
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    DependsOn: BlogCDN
+    Properties:
+      HostedZoneName: !Sub '${ValidationDomain}.'
+      Comment: !Sub ${AWS::StackName}
+      Name: !Sub ${SiteUrl}
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt BlogCDN.DomainName
+# DNS --- END ---
