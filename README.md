@@ -50,34 +50,24 @@ The original version of the starter is preserved as the branch `gatsby-v1`.
 - Webpack `BundleAnalyzerPlugin`
 - **Gravatar** image (optional) instead local Avatar/Logo image
 
-## Prerequisites
-
-If you do not have Gatsby Cli installed yet, do it first.
-
-```text
-npm install --global gatsby-cli
-```
-
-More information on [GatsbyJS.org](https://www.gatsbyjs.org/tutorial/part-one)
-
 ## Getting started
 
-Install the starter using Gatsby Cli `gatsby new` command.
+Install the dependencies
 
 ```text
-gatsby new [NEW_SITE_DIRECTORY_FOR_YOUR_BLOG] https://github.com/greglobinski/gatsby-starter-hero-blog.git
+npm install
 ```
 
-Go into the newly created directory and run
+To hot-serve your website on http://localhost:8000 
 
 ```text
-gatsby develop
+npm run develop
 ```
 
-to hot-serve your website on http://localhost:8000 or
+Build
 
 ```text
-gatsby build
+npm run build
 ```
 
 to create static site ready to host (/public).
