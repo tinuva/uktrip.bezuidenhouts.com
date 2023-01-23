@@ -38,8 +38,17 @@ module.exports = {
     siteUrl: config.siteUrl
   },
   plugins: [
+     // Add typescript stack into webpack
+     `gatsby-plugin-typescript`,
+      // Use styled jsx and sass
+     {
+       resolve: `gatsby-plugin-styled-jsx`,
+       options: {
+         jsxPlugins: ['styled-jsx-plugin-sass']
+       }
+     },
     `gatsby-plugin-styled-jsx`, // the plugin's code is inserted directly to gatsby-node.js and gatsby-ssr.js files
-    `gatsby-plugin-styled-jsx-postcss`, // as above
+    //`gatsby-plugin-styled-jsx-postcss`, // as above
     {
       resolve: `gatsby-plugin-layout`,
       options: {
@@ -183,13 +192,13 @@ module.exports = {
         ]
       }
     },
-    // `gatsby-plugin-offline`,
-    // {
-    //   resolve: `gatsby-plugin-google-analytics`,
-    //   options: {
-    //     trackingId: process.env.GOOGLE_ANALYTICS_ID
-    //   }
-    // },
+    `gatsby-plugin-offline`,
+    {
+      resolve: `gatsby-plugin-google-analytics`,
+      options: {
+        trackingId: process.env.GOOGLE_ANALYTICS_ID
+      }
+    },
     {
       resolve: `gatsby-plugin-feed`,
       options: {

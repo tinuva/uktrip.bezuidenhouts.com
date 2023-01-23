@@ -52,7 +52,6 @@ const Item = props => {
               border-radius: ${theme.size.radius.small};
             }
 
-            {/* --- change white and primary here when hero or not --- */}
             :global(.homepage):not(.fixed) & :global(a) {
               color: ${theme.color.neutral.white}; 
             }
